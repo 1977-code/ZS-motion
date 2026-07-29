@@ -38,8 +38,22 @@ ZsMotionAudioProcessor::~ZsMotionAudioProcessor() = default;
 //==============================================================================
 void ZsMotionAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
+    // Hand the engine its settings first, so the oversampling latency is settled
+    // before the first block and the host hears about it straight away.
+    engine.setSettings (gatherSettings (120.0, 0.0, false));
     engine.prepare (sampleRate, samplesPerBlock, getTotalNumInputChannels());
-    setLatencySamples (engine.getLatencySamples());
+
+    reportedLatency = engine.getLatencySamples();
+    pendingLatency.store (reportedLatency, std::memory_order_relaxed);
+    setLatencySamples (reportedLatency);
+}
+
+void ZsMotionAudioProcessor::handleAsyncUpdate()
+{
+    const int latency = pendingLatency.load (std::memory_order_relaxed);
+
+    if (latency != getLatencySamples())
+        setLatencySamples (latency);
 }
 
 void ZsMotionAudioProcessor::releaseResources()
@@ -58,34 +72,9 @@ bool ZsMotionAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts)
 }
 
 //==============================================================================
-void ZsMotionAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
+zs::ModulationEngine::Settings
+ZsMotionAudioProcessor::gatherSettings (double bpm, double ppq, bool playing) const
 {
-    juce::ScopedNoDenormals noDenormals;
-
-    const int numIn      = getTotalNumInputChannels();
-    const int numOut     = getTotalNumOutputChannels();
-    const int numSamples = buffer.getNumSamples();
-
-    for (int ch = numIn; ch < numOut; ++ch)
-        buffer.clear (ch, 0, numSamples);
-
-    // ── Transport / tempo ────────────────────────────────────────────────────
-    double bpm = 120.0, ppq = 0.0;
-    bool   playing = false;
-
-    if (auto* ph = getPlayHead())
-    {
-        if (auto pos = ph->getPosition())
-        {
-            if (auto b = pos->getBpm())         bpm = *b;
-            if (auto q = pos->getPpqPosition()) ppq = *q;
-            playing = pos->getIsPlaying();
-        }
-    }
-
-    currentBpm.store (bpm, std::memory_order_relaxed);
-
-    // ── Gather settings ────────────────────────────────────────────────────
     zs::ModulationEngine::Settings s;
 
     s.mode           = (zs::ModulationEngine::Mode) juce::jlimit (0, 3, (int) pMode->load());
@@ -138,8 +127,49 @@ void ZsMotionAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     s.outputDb       = pOutput->load();
     s.chorusFeedback = pChorusFeedback->load();
 
-    engine.setSettings (s);
+    return s;
+}
+
+void ZsMotionAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
+{
+    juce::ScopedNoDenormals noDenormals;
+
+    const int numIn      = getTotalNumInputChannels();
+    const int numOut     = getTotalNumOutputChannels();
+    const int numSamples = buffer.getNumSamples();
+
+    for (int ch = numIn; ch < numOut; ++ch)
+        buffer.clear (ch, 0, numSamples);
+
+    // ── Transport / tempo ────────────────────────────────────────────────────
+    double bpm = 120.0, ppq = 0.0;
+    bool   playing = false;
+
+    if (auto* ph = getPlayHead())
+    {
+        if (auto pos = ph->getPosition())
+        {
+            if (auto b = pos->getBpm())         bpm = *b;
+            if (auto q = pos->getPpqPosition()) ppq = *q;
+            playing = pos->getIsPlaying();
+        }
+    }
+
+    currentBpm.store (bpm, std::memory_order_relaxed);
+
+    engine.setSettings (gatherSettings (bpm, ppq, playing));
     engine.process (buffer);
+
+    // Changing the oversampling changes the latency; hand that off to the message
+    // thread rather than calling into the host from here.
+    const int latency = engine.getLatencySamples();
+
+    if (latency != reportedLatency)
+    {
+        reportedLatency = latency;
+        pendingLatency.store (latency, std::memory_order_relaxed);
+        triggerAsyncUpdate();
+    }
 }
 
 //==============================================================================
@@ -150,15 +180,40 @@ juce::AudioProcessorEditor* ZsMotionAudioProcessor::createEditor()
 
 void ZsMotionAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    if (auto xml = apvts.copyState().createXml())
+    auto tree = apvts.copyState();
+
+    // Stamped so a future version can recognise and migrate an older session
+    // instead of silently mis-reading it.
+    tree.setProperty (schemaVersionProperty, currentSchemaVersion, nullptr);
+
+    if (auto xml = tree.createXml())
         copyXmlToBinary (*xml, destData);
 }
 
 void ZsMotionAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
-    if (auto xml = getXmlFromBinary (data, sizeInBytes))
-        if (xml->hasTagName (apvts.state.getType()))
-            apvts.replaceState (juce::ValueTree::fromXml (*xml));
+    auto xml = getXmlFromBinary (data, sizeInBytes);
+
+    if (xml == nullptr || ! xml->hasTagName (apvts.state.getType()))
+        return;
+
+    auto tree = juce::ValueTree::fromXml (*xml);
+
+    if (! tree.isValid())
+        return;
+
+    // Sessions saved before the stamp existed read as 0; nothing has needed
+    // migrating yet, so they load as they are. New shapes get handled here.
+    const int version = (int) tree.getProperty (schemaVersionProperty, 0);
+
+    if (version > currentSchemaVersion)
+    {
+        // Saved by a newer build. Load what we understand rather than refusing —
+        // unknown parameters are simply absent from this build's layout.
+        jassert (version <= currentSchemaVersion);
+    }
+
+    apvts.replaceState (tree);
 }
 
 //==============================================================================

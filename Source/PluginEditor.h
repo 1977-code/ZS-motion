@@ -84,7 +84,26 @@ private:
 
         juce::ComboBox   presetBox;
         juce::TextButton prevPreset { "<" }, nextPreset { ">" };
+        juce::TextButton savePreset { "Save" }, deletePreset { "Del" };
+
         void syncPresetBox();
+        void rebuildPresetList();
+        void askToSavePreset();
+        void askToDeletePreset();
+
+        /** Watches the dirty flag so the name can show it has been altered. */
+        struct DirtyWatcher final : juce::Component, private juce::Timer
+        {
+            explicit DirtyWatcher (Content&);
+            void paint (juce::Graphics&) override;
+            void timerCallback() override;
+
+            Content& owner;
+            bool wasDirty = false;
+        };
+
+        DirtyWatcher dirtyWatcher { *this };
+        std::unique_ptr<juce::AlertWindow> nameWindow;
 
         // Keeps the greyed-out captions in step with the mode and the Fan switch.
         juce::ParameterAttachment modeWatcher, fanWatcher;

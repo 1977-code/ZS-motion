@@ -41,13 +41,16 @@ public:
 
         amountSmoothed.prepare (baseSampleRate, 0.02f, amountSmoothed.getTarget());
 
+        // Linear-phase FIR rather than the cheaper polyphase IIR, and integer
+        // latency. The IIR's group delay varies with frequency, so no single delay
+        // can line the dry path back up against it — mixing the two then combs. FIR
+        // costs a little more and delays every frequency by the same whole number of
+        // samples, which is what makes the compensation in the engine exact.
         using OS = juce::dsp::Oversampling<float>;
-        os2x = std::make_unique<OS> ((size_t) numChannels, 1, OS::filterHalfBandPolyphaseIIR, true, false);
-        os4x = std::make_unique<OS> ((size_t) numChannels, 2, OS::filterHalfBandPolyphaseIIR, true, false);
+        os2x = std::make_unique<OS> ((size_t) numChannels, 1, OS::filterHalfBandFIREquiripple, true, true);
+        os4x = std::make_unique<OS> ((size_t) numChannels, 2, OS::filterHalfBandFIREquiripple, true, true);
         os2x->initProcessing ((size_t) maxBlock);
         os4x->initProcessing ((size_t) maxBlock);
-
-        blendScratch.setSize (numChannels, maxBlock);
 
         reset();
     }
@@ -63,10 +66,60 @@ public:
     void setCharacter (Character c) noexcept { character = c; }
     void setQuality (int q)         noexcept { quality = juce::jlimit (0, 2, q); }
 
+    static constexpr float maxDriveDb = 18.0f;
+
+    /** Drive gain for a 0..1 Saturation setting. */
+    static float driveGainFor (float amount01) noexcept
+    {
+        return math::dbToGain (math::clamp (amount01, 0.0f, 1.0f) * maxDriveDb);
+    }
+
+    /** The transfer curve on its own, with no state.
+
+        Shared with the interface so the rotor can be drawn through the very same
+        non-linearity the audio goes through — driving the plug-in then visibly
+        deforms the sculpture instead of only tinting it. */
+    static float curve (float x, float driveGain, Character character) noexcept
+    {
+        switch (character)
+        {
+            case Character::Hard:
+                return math::clamp (driveGain * x, -1.0f, 1.0f);
+
+            case Character::Asymmetric:
+            {
+                const float g = x >= 0.0f ? driveGain : driveGain * 0.6f;
+                return std::tanh (g * x) / std::tanh (driveGain);
+            }
+
+            case Character::Soft:
+            default:
+                return std::tanh (driveGain * x) / std::tanh (driveGain);
+        }
+    }
+
+    /** Latency the current quality setting adds, in samples at the base rate.
+
+        The oversampled path is not free: the up/down filters delay it. Anything
+        that mixes this stage against an undelayed dry signal has to make up for
+        this, or the two comb-filter against each other. */
+    float getLatencySamples() const noexcept
+    {
+        if (quality == 0)
+            return 0.0f;
+
+        const auto& os = (quality == 2 ? os4x : os2x);
+        return os != nullptr ? (float) os->getLatencyInSamples() : 0.0f;
+    }
+
     void processBlock (juce::AudioBuffer<float>& buffer) noexcept
     {
-        const int channels   = juce::jmin (numChannels, buffer.getNumChannels());
-        const int numSamples  = buffer.getNumSamples();
+        const int channels = juce::jmin (numChannels, buffer.getNumChannels());
+
+        // The oversamplers were sized in prepare(); a host that sends a longer block
+        // than it promised would otherwise walk off the end of their buffers.
+        const int numSamples = juce::jmin (buffer.getNumSamples(), maxBlock);
+
         if (channels <= 0 || numSamples <= 0)
             return;
 
@@ -76,73 +129,57 @@ public:
 
         const float driveGain = math::dbToGain (amount * maxDriveDb);
 
-        // Keep the pre-saturation signal for the equal-onset blend.
-        for (int ch = 0; ch < channels; ++ch)
-            blendScratch.copyFrom (ch, 0, buffer, ch, 0, numSamples);
-
+        // The dry/wet blend of the non-linearity has to happen on signals that sit
+        // at the same point in time. Doing it at the base rate against the
+        // oversampled output would comb, because the up/down filters delay that
+        // output by a few samples — so when we oversample, the blend goes up there
+        // with the shaping and comes back down as one signal.
         if (quality == 0)
         {
             for (int ch = 0; ch < channels; ++ch)
             {
                 auto* d = buffer.getWritePointer (ch);
+
                 for (int i = 0; i < numSamples; ++i)
-                    d[i] = shape (d[i], driveGain, ch);
-            }
-        }
-        else
-        {
-            auto& os = (quality == 2 ? *os4x : *os2x);
-
-            juce::dsp::AudioBlock<float> block (buffer.getArrayOfWritePointers(),
-                                                (size_t) channels, (size_t) numSamples);
-            auto up = os.processSamplesUp (block);
-
-            const int upN = (int) up.getNumSamples();
-            for (int ch = 0; ch < channels; ++ch)
-            {
-                auto* d = up.getChannelPointer ((size_t) ch);
-                for (int i = 0; i < upN; ++i)
-                    d[i] = shape (d[i], driveGain, ch);
+                    d[i] = math::lerp (d[i], shape (d[i], driveGain, ch), amount);
             }
 
-            os.processSamplesDown (block);
+            return;
         }
 
-        // Equal-onset blend: amount 0 → dry, amount 1 → fully shaped.
+        auto& os = (quality == 2 ? *os4x : *os2x);
+
+        juce::dsp::AudioBlock<float> block (buffer.getArrayOfWritePointers(),
+                                            (size_t) channels, (size_t) numSamples);
+        auto up = os.processSamplesUp (block);
+
+        const int upN = (int) up.getNumSamples();
+
         for (int ch = 0; ch < channels; ++ch)
         {
-            auto* d = buffer.getWritePointer (ch);
-            const auto* dry = blendScratch.getReadPointer (ch);
-            for (int i = 0; i < numSamples; ++i)
-                d[i] = math::lerp (dry[i], d[i], amount);
+            auto* d = up.getChannelPointer ((size_t) ch);
+
+            for (int i = 0; i < upN; ++i)
+                d[i] = math::lerp (d[i], shape (d[i], driveGain, ch), amount);
         }
+
+        os.processSamplesDown (block);
     }
 
 private:
     float shape (float x, float driveGain, int ch) noexcept
     {
-        switch (character)
-        {
-            case Character::Hard:
-                return math::clamp (driveGain * x, -1.0f, 1.0f);
+        const float y = curve (x, driveGain, character);
 
-            case Character::Asymmetric:
-            {
-                const float g  = x >= 0.0f ? driveGain : driveGain * 0.6f;
-                const float y  = std::tanh (g * x) / std::tanh (driveGain);
-                const float out = y - dcX1[ch] + 0.9995f * dcY1[ch];   // remove the DC the asymmetry adds
-                dcX1[ch] = y;
-                dcY1[ch] = out;
-                return out;
-            }
+        if (character != Character::Asymmetric)
+            return y;
 
-            case Character::Soft:
-            default:
-                return std::tanh (driveGain * x) / std::tanh (driveGain);
-        }
+        // Remove the DC that the asymmetry introduces.
+        const float out = y - dcX1[ch] + 0.9995f * dcY1[ch];
+        dcX1[ch] = y;
+        dcY1[ch] = out;
+        return out;
     }
-
-    static constexpr float maxDriveDb = 18.0f;
 
     Character character = Character::Soft;
     int       quality   = 0;                 // 0 off, 1 = 2x, 2 = 4x
@@ -151,7 +188,6 @@ private:
     double    baseSampleRate = 44100.0;
 
     std::unique_ptr<juce::dsp::Oversampling<float>> os2x, os4x;
-    juce::AudioBuffer<float> blendScratch;
 
     SmoothedParameter amountSmoothed;
     float dcX1[2] = { 0.0f, 0.0f };

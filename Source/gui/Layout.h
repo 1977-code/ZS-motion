@@ -54,12 +54,12 @@ namespace zs::layout
 
     inline juce::Rectangle<int> presetBarBounds()
     {
-        return { margin, barY, 330, barH };
+        return { margin, barY, 434, barH };
     }
 
     inline juce::Rectangle<int> modeBarBounds()
     {
-        const int x = margin + 350;
+        const int x = margin + 454;
         return { x, barY, width - margin - x, barH };
     }
 

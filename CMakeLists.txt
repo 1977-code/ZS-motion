@@ -6,7 +6,7 @@ if (APPLE)
     set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Build architectures")
 endif ()
 
-project(ZSmotion VERSION 0.3.0 LANGUAGES C CXX)
+project(ZSmotion VERSION 0.5.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -35,7 +35,10 @@ juce_add_plugin(ZSmotion
     VST3_CATEGORIES           Fx Modulation
     AU_MAIN_TYPE              kAudioUnitType_Effect
     NEEDS_WEB_BROWSER         FALSE
-    NEEDS_CURL                FALSE)
+    NEEDS_CURL                FALSE
+    # JUCE turns this into the .icns and .ico the bundles need. Generated from the
+    # brand theme by the ZSmotionArt target.
+    ICON_BIG                  "Resources/brand/icon.png")
 
 # ─── Embedded brand fonts (shared with the rest of the ZS Records line) ──────
 juce_add_binary_data(ZSmotionAssets
@@ -113,6 +116,37 @@ endif ()
 # ─── Offscreen interface snapshots ──────────────────────────────────────────
 # Renders the editor to PNG without a window, so a layout can be checked without
 # loading a host. Off by default; it pulls the GUI modules into a console app.
+# ─── Brand artwork generator ────────────────────────────────────────────────
+# Renders the icon and the installer graphics from the same theme code the
+# interface uses, so they cannot drift from the plug-in. Off by default; the
+# generated files are committed, so a normal build never needs it.
+option(ZSMOTION_BUILD_ART "Build the brand artwork generator" OFF)
+
+if (ZSMOTION_BUILD_ART)
+    juce_add_console_app(ZSmotionArt PRODUCT_NAME "ZS-motion Art")
+
+    target_sources(ZSmotionArt
+        PRIVATE
+            Tests/BrandArt.cpp
+            Source/gui/Theme.cpp)
+
+    target_include_directories(ZSmotionArt PRIVATE Source)
+
+    target_compile_definitions(ZSmotionArt
+        PUBLIC
+            JUCE_WEB_BROWSER=0
+            JUCE_USE_CURL=0
+            JUCE_STANDALONE_APPLICATION=1)
+
+    target_link_libraries(ZSmotionArt
+        PRIVATE
+            ZSmotionAssets
+            juce::juce_gui_extra
+        PUBLIC
+            juce::juce_recommended_config_flags
+            juce::juce_recommended_warning_flags)
+endif ()
+
 option(ZSMOTION_BUILD_SHOT "Build the offscreen interface snapshot tool" OFF)
 
 if (ZSMOTION_BUILD_SHOT)

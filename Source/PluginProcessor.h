@@ -7,7 +7,8 @@
 #include "dsp/ModulationEngine.h"
 
 //==============================================================================
-class ZsMotionAudioProcessor final : public juce::AudioProcessor
+class ZsMotionAudioProcessor final : public juce::AudioProcessor,
+                                     private juce::AsyncUpdater
 {
 public:
     ZsMotionAudioProcessor();
@@ -58,11 +59,22 @@ public:
     double getCurrentBpm()   const noexcept { return currentBpm.load (std::memory_order_relaxed); }
 
     /** Editor size, remembered inside the plug-in state. */
-    static constexpr const char* editorWidthProperty  = "editorWidth";
-    static constexpr const char* editorHeightProperty = "editorHeight";
+    static constexpr const char* editorWidthProperty = "editorWidth";
+
+    /** Bumped whenever the saved shape changes in a way that needs migrating. */
+    static constexpr const char* schemaVersionProperty = "schemaVersion";
+    static constexpr int         currentSchemaVersion  = 1;
 
 private:
     std::atomic<float>* raw (const char* id) const { return apvts.getRawParameterValue (id); }
+
+    /** Reads every parameter into one settings block. Shared by prepareToPlay and
+        processBlock so the latency is known before the first block runs. */
+    zs::ModulationEngine::Settings gatherSettings (double bpm, double ppq, bool playing) const;
+
+    /** Telling the host its latency changed can allocate and lock, so the audio
+        thread only flags it and the message thread does the call. */
+    void handleAsyncUpdate() override;
 
     zs::ModulationEngine engine;
 
@@ -92,7 +104,12 @@ private:
     std::atomic<float>* pChorusFeedback = nullptr;
 
     std::atomic<double> currentBpm { 120.0 };
-    std::atomic<float>  effectiveRate { 1.0f };
+
+    // Written while gathering settings, which is otherwise a read-only pass.
+    mutable std::atomic<float> effectiveRate { 1.0f };
+
+    std::atomic<int>    pendingLatency { 0 };
+    int                 reportedLatency = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ZsMotionAudioProcessor)
 };

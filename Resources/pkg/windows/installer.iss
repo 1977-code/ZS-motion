@@ -22,6 +22,11 @@
   #define StageDir "stage"
 #endif
 
+; Where the generated brand artwork lives, relative to this script by default.
+#ifndef BrandDir
+  #define BrandDir "..\..\brand"
+#endif
+
 [Setup]
 ; Never change AppId — it is how Windows recognises an upgrade of this product.
 AppId={{B676DC95-ABCF-4793-8EC2-2464F408A8BD}
@@ -52,7 +57,15 @@ OutputDir=.
 OutputBaseFilename={#AppName}-{#AppVersion}-Windows
 Compression=lzma2/max
 SolidCompression=yes
+
+; Branding — all of it generated from the plug-in's own theme by the ZSmotionArt
+; target, so the installer cannot end up looking like a different product.
 WizardStyle=modern
+SetupIconFile={#BrandDir}\installer.ico
+WizardImageFile={#BrandDir}\wizard-large.png
+WizardSmallImageFile={#BrandDir}\wizard-small.png
+WizardImageStretch=yes
+WizardResizable=no
 
 [Languages]
 Name: "ru"; MessagesFile: "compiler:Languages\Russian.isl"

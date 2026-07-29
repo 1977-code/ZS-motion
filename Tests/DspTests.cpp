@@ -301,6 +301,65 @@ int main()
         check (alias4x < aliasOff * 0.5, "4x oversampling roughly halves saturation aliasing (or better)");
     }
 
+    // ── The oversampled saturation must stay aligned with the dry signal ───────
+    {
+        for (int q = 0; q <= 2; ++q)
+        {
+            zs::Saturator sat;
+            sat.prepare (sr, block, 2);
+            sat.setQuality (q);
+            std::printf ("      saturation latency at quality %d: %.3f samples\n",
+                         q, sat.getLatencySamples());
+        }
+
+        // Measure the real delay: full wet, tiny signal so the curve is near
+        // linear, and see where an impulse lands. If that disagrees with what the
+        // stage reports, the dry compensation in the engine is wrong and the mix
+        // combs — which is exactly the bug this guards.
+        for (int q = 1; q <= 2; ++q)
+        {
+            zs::Saturator sat;
+            sat.prepare (sr, block, 1);
+            sat.setQuality (q);
+            sat.setCharacter (zs::Saturator::Character::Soft);
+            sat.setAmount (1.0f);
+
+            constexpr int N = 2048;
+            constexpr int at = 64;
+
+            juce::AudioBuffer<float> buf (1, N);
+            buf.clear();
+            buf.setSample (0, at, 0.02f);
+
+            for (int start = 0; start < N; start += block)
+            {
+                const int len = std::min (block, N - start);
+                juce::AudioBuffer<float> chunk (buf.getArrayOfWritePointers(), 1, start, len);
+                sat.processBlock (chunk);
+            }
+
+            // Centre of energy is a steadier read than the single largest sample.
+            double weighted = 0.0, total = 0.0;
+            for (int i = 0; i < N; ++i)
+            {
+                const double e = (double) buf.getSample (0, i) * buf.getSample (0, i);
+                weighted += e * i;
+                total    += e;
+            }
+
+            const double centre = total > 0.0 ? weighted / total : 0.0;
+            const double measured = centre - at;
+            const double reported = sat.getLatencySamples();
+
+            std::printf ("      quality %d: reported %.2f, measured %.2f samples\n",
+                         q, reported, measured);
+
+            check (std::abs (measured - reported) < 1.5,
+                   q == 1 ? "2x saturation latency matches what it reports"
+                          : "4x saturation latency matches what it reports");
+        }
+    }
+
     // ── Rotary survives an abrupt rate jump (inertia is finite) ─────────────────
     {
         zs::ModulationEngine eng;

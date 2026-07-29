@@ -191,6 +191,11 @@ cat > "$distXml" <<EOF
     <welcome    file="welcome.html"    mime-type="text/html"/>
     <conclusion file="conclusion.html" mime-type="text/html"/>
 
+    <!-- Brand artwork, generated from the plug-in's own theme. The same dark
+         image serves both appearances, so light and dark mode agree. -->
+    <background          file="pkg-background.png" alignment="bottomleft" scaling="none"/>
+    <background-darkAqua file="pkg-background.png" alignment="bottomleft" scaling="none"/>
+
     <options customize="always" require-scripts="false" hostArchitectures="arm64,x86_64"/>
     <allowed-os-versions><os-version min="10.15"/></allowed-os-versions>
     <domains enable_localSystem="true"/>

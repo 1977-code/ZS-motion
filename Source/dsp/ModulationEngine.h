@@ -72,7 +72,13 @@ public:
 
     void process (juce::AudioBuffer<float>& buffer) noexcept;
 
-    int getLatencySamples() const noexcept { return 0; }
+    /** Latency the chain currently carries, in samples. Non-zero only while the
+        saturation is oversampling; the dry path is delayed to match internally, so
+        this is a true figure for the whole plug-in. */
+    int getLatencySamples() const noexcept
+    {
+        return juce::roundToInt (dryDelaySamples);
+    }
 
     // ── UI taps (lock-free) ────────────────────────────────────────────────
     float getUiPhase()      const noexcept { return uiPhase.load (std::memory_order_relaxed); }
@@ -103,8 +109,17 @@ private:
 
     SmoothedParameter outputGain;
 
+    // Phase offsets are read per block, so they have to be eased or a big jump in
+    // Stereo/Phase steps the LFO and clicks.
+    SmoothedParameter phaseOffset, stereoOffset;
+
     // Wet scratch for the block-rate (optionally oversampled) saturation stage.
     juce::AudioBuffer<float> wetScratch;
+
+    // The oversampled saturation delays the wet path by a few samples. The dry
+    // going into the mixer is delayed to match, or the two comb against each other.
+    std::array<FractionalDelay, 2> dryCompensation;
+    float dryDelaySamples = 0.0f;
 
     Settings pending {};
 

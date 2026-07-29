@@ -21,14 +21,26 @@ void ModulationEngine::prepare (double newSampleRate, int maximumBlockSize, int 
     mixer.prepare (sampleRate);
 
     outputGain.prepare (sampleRate, 0.01f, 1.0f);
+    phaseOffset.prepare  (sampleRate, 0.03f, 0.0f);
+    stereoOffset.prepare (sampleRate, 0.03f, 0.25f);
 
     wetScratch.setSize (numChannels, juce::jmax (1, maximumBlockSize));
+
+    // Room for the worst case the oversamplers can ask for, plus the interpolation
+    // margin the delay needs.
+    for (auto& line : dryCompensation)
+        line.prepare (32);
 
     xfadeLen       = juce::jmax (1, (int) (0.03 * sampleRate));   // ~30 ms
     xfadeCountdown = 0;
 
     currentMode = pending.mode;
     prevMode    = pending.mode;
+
+    // Settle the settings now, so the latency is known before the first block and
+    // the host can be told about it up front.
+    applySettings (pending);
+    dryDelaySamples = saturator.getLatencySamples();
 
     reset();
 }
@@ -44,6 +56,9 @@ void ModulationEngine::reset()
     saturator.reset();
     stereoWidth.reset();
     mixer.reset();
+
+    for (auto& line : dryCompensation)
+        line.reset();
 
     xfadeCountdown = 0;
 
@@ -115,8 +130,12 @@ void ModulationEngine::process (juce::AudioBuffer<float>& buffer) noexcept
     if (s.hostPhase01 >= 0.0f)
         lfo.setPhase (s.hostPhase01);
 
-    const float phaseOffset01  = s.phaseDeg / 360.0f;
-    const float stereoOffset01 = s.stereoPhaseDeg / 360.0f;
+    phaseOffset.setTarget  (s.phaseDeg / 360.0f);
+    stereoOffset.setTarget (s.stereoPhaseDeg / 360.0f);
+
+    // How far the oversampled saturation is pushing the wet path behind.
+    dryDelaySamples = saturator.getLatencySamples();
+    const bool compensate = dryDelaySamples >= 2.0f;
 
     ModeProcessor* cur  = modeFor (currentMode);
     ModeProcessor* prev = modeFor (prevMode);
@@ -147,8 +166,12 @@ void ModulationEngine::process (juce::AudioBuffer<float>& buffer) noexcept
         const float dryR = stereo ? right[i] : dryL;
 
         lfo.advance();
-        const float lfoL = lfo.value (phaseOffset01);
-        const float lfoR = lfo.value (phaseOffset01 + stereoOffset01);
+
+        const float offset = phaseOffset.getNextValue();
+        const float spread = stereoOffset.getNextValue();
+
+        const float lfoL = lfo.value (offset);
+        const float lfoR = lfo.value (offset + spread);
         lastLfo = lfoL;
 
         const float sL = satL[i];
@@ -178,8 +201,15 @@ void ModulationEngine::process (juce::AudioBuffer<float>& buffer) noexcept
         float wL, wR;
         stereoWidth.processSample (fL, fR, wL, wR);
 
+        // Keep the dry in step with a wet path that the oversamplers have delayed.
+        dryCompensation[0].push (dryL);
+        dryCompensation[1].push (dryR);
+
+        const float alignedL = compensate ? dryCompensation[0].readHermite (dryDelaySamples) : dryL;
+        const float alignedR = compensate ? dryCompensation[1].readHermite (dryDelaySamples) : dryR;
+
         float oL, oR;
-        mixer.processSample (dryL, dryR, wL, wR, oL, oR);
+        mixer.processSample (alignedL, alignedR, wL, wR, oL, oR);
 
         const float og = outputGain.getNextValue();
         oL *= og;

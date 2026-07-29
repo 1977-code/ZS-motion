@@ -214,7 +214,6 @@ ZsMotionAudioProcessorEditor::Content::Content (ZsMotionAudioProcessor& p)
     // ── Presets ──────────────────────────────────────────────────────────────
     styleCombo (presetBox);
     presetBox.setJustificationType (Justification::centred);
-    presetBox.addItemList (processor.presets.getPresetNames(), 1);
     presetBox.setTooltip (presetTip);
     presetBox.onChange = [this]
     {
@@ -224,15 +223,20 @@ ZsMotionAudioProcessorEditor::Content::Content (ZsMotionAudioProcessor& p)
     };
     addAndMakeVisible (presetBox);
 
-    for (auto* b : { &prevPreset, &nextPreset })
+    for (auto* b : { &prevPreset, &nextPreset, &savePreset, &deletePreset })
     {
         b->setTooltip (presetTip);
         addAndMakeVisible (b);
     }
 
-    prevPreset.onClick = [this] { processor.presets.selectPrevious(); syncPresetBox(); };
-    nextPreset.onClick = [this] { processor.presets.selectNext();     syncPresetBox(); };
-    syncPresetBox();
+    prevPreset.onClick   = [this] { processor.presets.selectPrevious(); syncPresetBox(); };
+    nextPreset.onClick   = [this] { processor.presets.selectNext();     syncPresetBox(); };
+    savePreset.onClick   = [this] { askToSavePreset(); };
+    deletePreset.onClick = [this] { askToDeletePreset(); };
+
+    addAndMakeVisible (dirtyWatcher);
+
+    rebuildPresetList();
 
     modeWatcher.sendInitialUpdate();
     fanWatcher.sendInitialUpdate();
@@ -262,6 +266,109 @@ void ZsMotionAudioProcessorEditor::Content::addCombo (ComboBox& box,
 void ZsMotionAudioProcessorEditor::Content::syncPresetBox()
 {
     presetBox.setSelectedId (processor.presets.getCurrentIndex() + 1, dontSendNotification);
+    deletePreset.setEnabled (processor.presets.isUserPreset (processor.presets.getCurrentIndex()));
+    dirtyWatcher.repaint();
+}
+
+/** Factory set and the user's own, under their own headings. */
+void ZsMotionAudioProcessorEditor::Content::rebuildPresetList()
+{
+    presetBox.clear (dontSendNotification);
+
+    auto* menu = presetBox.getRootMenu();
+    int id = 1;
+
+    presetBox.addSectionHeading ("FACTORY");
+    for (const auto& name : processor.presets.getFactoryNames())
+        presetBox.addItem (name, id++);
+
+    const auto userNames = processor.presets.getUserNames();
+
+    if (! userNames.isEmpty())
+    {
+        menu->addSeparator();
+        presetBox.addSectionHeading ("USER");
+
+        for (const auto& name : userNames)
+            presetBox.addItem (name, id++);
+    }
+
+    syncPresetBox();
+}
+
+void ZsMotionAudioProcessorEditor::Content::askToSavePreset()
+{
+    nameWindow = std::make_unique<AlertWindow> (
+        String::fromUTF8 ("Сохранить пресет"),
+        String::fromUTF8 ("Имя пресета. Существующий с тем же именем будет заменён."),
+        MessageBoxIconType::NoIcon);
+
+    nameWindow->addTextEditor ("name", processor.presets.getCurrentName(), {});
+    nameWindow->addButton (String::fromUTF8 ("Сохранить"), 1, KeyPress (KeyPress::returnKey));
+    nameWindow->addButton (String::fromUTF8 ("Отмена"),    0, KeyPress (KeyPress::escapeKey));
+
+    nameWindow->enterModalState (true, ModalCallbackFunction::create ([this] (int result)
+    {
+        if (result == 1 && nameWindow != nullptr)
+        {
+            const auto name = nameWindow->getTextEditorContents ("name");
+
+            if (processor.presets.saveUserPreset (name) >= 0)
+                rebuildPresetList();
+        }
+
+        nameWindow.reset();
+    }), false);
+}
+
+void ZsMotionAudioProcessorEditor::Content::askToDeletePreset()
+{
+    const int index = processor.presets.getCurrentIndex();
+
+    if (! processor.presets.isUserPreset (index))
+        return;
+
+    const auto name = processor.presets.getCurrentName();
+
+    NativeMessageBox::showOkCancelBox (
+        MessageBoxIconType::NoIcon,
+        String::fromUTF8 ("Удалить пресет"),
+        String::fromUTF8 ("Удалить «") + name + String::fromUTF8 ("» безвозвратно?"),
+        this,
+        ModalCallbackFunction::create ([this, index] (int result)
+        {
+            if (result == 1 && processor.presets.deleteUserPreset (index))
+                rebuildPresetList();
+        }));
+}
+
+//==============================================================================
+ZsMotionAudioProcessorEditor::Content::DirtyWatcher::DirtyWatcher (Content& c)
+    : owner (c)
+{
+    setInterceptsMouseClicks (false, false);
+    startTimerHz (6);
+}
+
+void ZsMotionAudioProcessorEditor::Content::DirtyWatcher::timerCallback()
+{
+    const bool now = owner.processor.presets.isDirty();
+
+    if (now != wasDirty)
+    {
+        wasDirty = now;
+        repaint();
+    }
+}
+
+void ZsMotionAudioProcessorEditor::Content::DirtyWatcher::paint (Graphics& g)
+{
+    if (! owner.processor.presets.isDirty())
+        return;
+
+    // A single gold dot: the preset no longer matches what you are hearing.
+    g.setColour (zs::theme::gold);
+    g.fillEllipse (getLocalBounds().toFloat().withSizeKeepingCentre (5.0f, 5.0f));
 }
 
 /** Grey out what the current mode and the Fan switch make irrelevant. */
@@ -294,13 +401,22 @@ void ZsMotionAudioProcessorEditor::Content::resized()
     rotor.setBounds (rotorBounds());
     modes.setBounds (modeBarBounds());
 
-    // Preset bar.
+    // Preset bar:  <  [ name ]  >   Save  Del
     {
         auto bar = presetBarBounds();
-        prevPreset.setBounds (bar.removeFromLeft (32).reduced (2, 5));
-        bar.removeFromLeft (4);
-        nextPreset.setBounds (bar.removeFromRight (32).reduced (2, 5));
+
+        prevPreset.setBounds (bar.removeFromLeft (30).reduced (2, 5));
+        bar.removeFromLeft (3);
+
+        deletePreset.setBounds (bar.removeFromRight (46).reduced (2, 5));
         bar.removeFromRight (4);
+        savePreset.setBounds (bar.removeFromRight (56).reduced (2, 5));
+        bar.removeFromRight (10);
+
+        nextPreset.setBounds (bar.removeFromRight (30).reduced (2, 5));
+        bar.removeFromRight (3);
+
+        dirtyWatcher.setBounds (bar.removeFromRight (12));
         presetBox.setBounds (bar.reduced (0, 6));
     }
 

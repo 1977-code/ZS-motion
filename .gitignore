@@ -1,0 +1,9 @@
+build/
+build-*/
+# Matches the directory and a symlink to one — a trailing slash would miss the
+# symlink, and committing that breaks the CI checkout.
+/JUCE
+.DS_Store
+*.xcuserdatad
+xcuserdata/
+dist/

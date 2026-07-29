@@ -1,0 +1,121 @@
+name: Windows installer
+
+# Builds the Windows VST3 and standalone with the MSVC toolchain used to ship most
+# JUCE plug-ins, wraps them in an Inno Setup installer, and uploads it as a
+# downloadable artifact. Pushing a v* tag also publishes the installer to a GitHub
+# release, which gives a plain download link to hand to someone.
+#
+# The MSVC environment is loaded explicitly (msvc-dev-cmd) and the build is driven
+# by Ninja, rather than relying on CMake's Visual Studio generator to locate the
+# toolchain — that detection is brittle across runner-image updates.
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write        # needed to attach the installer to a release
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fetch JUCE
+        run: git clone --depth 1 --branch master https://github.com/juce-framework/JUCE.git JUCE
+
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Set up Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v6
+
+      - name: Read version
+        id: version
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path CMakeLists.txt -Pattern 'project\(ZSmotion VERSION ([0-9.]+)').Matches[0].Groups[1].Value
+          "value=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "version = $v"
+
+      - name: Configure
+        run: >
+          cmake -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DZSMOTION_COPY_AFTER_BUILD=OFF
+          -DZSMOTION_BUILD_TESTS=ON
+
+      - name: Build plug-in and standalone
+        run: |
+          cmake --build build --target ZSmotion_VST3
+          cmake --build build --target ZSmotion_Standalone
+
+      - name: Build and run DSP checks
+        run: |
+          cmake --build build --target ZSmotionTests
+          & "build/ZSmotionTests_artefacts/Release/ZSmotionTests.exe"
+
+      - name: Stage build output
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path stage/VST3, stage/Standalone | Out-Null
+          Copy-Item -Recurse "build/ZSmotion_artefacts/Release/VST3/ZS-motion.vst3" stage/VST3/
+          Copy-Item "build/ZSmotion_artefacts/Release/Standalone/ZS-motion.exe" stage/Standalone/
+          Get-ChildItem -Recurse stage | Select-Object -First 20 FullName
+
+      - name: Ensure Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            Write-Host "Inno Setup not on the image — installing it."
+            choco install innosetup -y --no-progress
+          }
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe still not found at $iscc" }
+          "ISCC=$iscc" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          & "$env:ISCC" `
+            "/DAppVersion=${{ steps.version.outputs.value }}" `
+            "/DStageDir=$(Resolve-Path stage)" `
+            "/O$(Resolve-Path dist)" `
+            "Resources/pkg/windows/installer.iss"
+          Get-ChildItem dist
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZS-motion-${{ steps.version.outputs.value }}-Windows-installer
+          path: dist/*.exe
+          if-no-files-found: error
+
+      - name: Upload bare VST3
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZS-motion-${{ steps.version.outputs.value }}-VST3-Windows-x64
+          path: stage/VST3/ZS-motion.vst3
+          if-no-files-found: error
+
+      # On a v* tag, publish the installer so there is a link to share.
+      - name: Publish to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --title "ZS-motion $tag" --generate-notes
+          }
+          gh release upload $tag (Get-ChildItem dist/*.exe).FullName --clobber

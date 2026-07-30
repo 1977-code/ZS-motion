@@ -31,7 +31,9 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
 product="ZS-motion"
+sibling="ZS-MOTION-FAN"
 identifier="ru.zsrecords.zsmotion"
+siblingIdentifier="ru.zsrecords.zsmotionfan"
 buildDir="build-dist"
 outDir="dist"
 
@@ -115,18 +117,26 @@ cmake --build "$buildDir" -j "$(sysctl -n hw.ncpu)" > /dev/null
 
 artefacts="$buildDir/ZSmotion_artefacts/Release"
 
+siblingArtefacts="$buildDir/ZSmotionFan_artefacts/Release"
+
 vst3="$artefacts/VST3/$product.vst3"
 au="$artefacts/AU/$product.component"
 app="$artefacts/Standalone/$product.app"
 
-for bundle in "$vst3" "$au" "$app"; do
+siblingVst3="$siblingArtefacts/VST3/$sibling.vst3"
+siblingAu="$siblingArtefacts/AU/$sibling.component"
+siblingApp="$siblingArtefacts/Standalone/$sibling.app"
+
+allBundles=("$vst3" "$au" "$app" "$siblingVst3" "$siblingAu" "$siblingApp")
+
+for bundle in "${allBundles[@]}"; do
     [[ -d "$bundle" ]] || { echo "Expected build output is missing: $bundle" >&2; exit 1; }
 done
 
 # Confirm we really did get a universal binary — a silently single-arch release
 # would fail on half the machines it is sent to.
-for bundle in "$vst3" "$au" "$app"; do
-    binary="$bundle/Contents/MacOS/$product"
+for bundle in "${allBundles[@]}"; do
+    binary="$bundle/Contents/MacOS/$(basename "$bundle" | sed 's/\.[^.]*$//')"
     archs="$(lipo -archs "$binary")"
 
     for wanted in arm64 x86_64; do
@@ -143,16 +153,18 @@ if [[ $wantSign -eq 1 ]]; then
 
     # The plug-ins inherit the host's permissions and need no entitlements; the
     # standalone records from an input device, so it asks for audio-input.
-    for bundle in "$vst3" "$au"; do
+    for bundle in "$vst3" "$au" "$siblingVst3" "$siblingAu"; do
         codesign --force --timestamp --options runtime \
                  --sign "$appCert" "$bundle"
     done
 
-    codesign --force --timestamp --options runtime \
-             --entitlements Resources/pkg/standalone.entitlements \
-             --sign "$appCert" "$app"
+    for bundle in "$app" "$siblingApp"; do
+        codesign --force --timestamp --options runtime \
+                 --entitlements Resources/pkg/standalone.entitlements \
+                 --sign "$appCert" "$bundle"
+    done
 
-    for bundle in "$vst3" "$au" "$app"; do
+    for bundle in "${allBundles[@]}"; do
         codesign --verify --strict --verbose=1 "$bundle" 2>&1 | sed 's/^/  /'
     done
 fi
@@ -179,13 +191,28 @@ pkgbuild --quiet --component "$app" \
          --identifier "$identifier.app" --version "$version" \
          "$pkgDir/app.pkg"
 
+pkgbuild --quiet --component "$siblingVst3" \
+         --install-location "/Library/Audio/Plug-Ins/VST3" \
+         --identifier "$siblingIdentifier.vst3" --version "$version" \
+         "$pkgDir/fan-vst3.pkg"
+
+pkgbuild --quiet --component "$siblingAu" \
+         --install-location "/Library/Audio/Plug-Ins/Components" \
+         --identifier "$siblingIdentifier.au" --version "$version" \
+         "$pkgDir/fan-au.pkg"
+
+pkgbuild --quiet --component "$siblingApp" \
+         --install-location "/Applications" \
+         --identifier "$siblingIdentifier.app" --version "$version" \
+         "$pkgDir/fan-app.pkg"
+
 # ─── Distribution ───────────────────────────────────────────────────────────
 distXml="$buildDir/distribution.xml"
 
 cat > "$distXml" <<EOF
 <?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="2">
-    <title>$product $version</title>
+    <title>ZS Motion Bundle $version</title>
     <organization>ru.zsrecords</organization>
 
     <welcome    file="welcome.html"    mime-type="text/html"/>
@@ -201,10 +228,22 @@ cat > "$distXml" <<EOF
     <domains enable_localSystem="true"/>
 
     <choices-outline>
-        <line choice="vst3"/>
-        <line choice="au"/>
-        <line choice="app"/>
+        <line choice="motion">
+            <line choice="vst3"/>
+            <line choice="au"/>
+            <line choice="app"/>
+        </line>
+        <line choice="fan">
+            <line choice="fan-vst3"/>
+            <line choice="fan-au"/>
+            <line choice="fan-app"/>
+        </line>
     </choices-outline>
+
+    <choice id="motion" title="$product"
+            description="Глубокий модуляционный движок: четыре режима, кинетический интерфейс, лопастная амплитудная модуляция."/>
+    <choice id="fan" title="$sibling"
+            description="Короткая версия: десять ручек и настоящая кольцевая модуляция вместо амплитудной."/>
 
     <choice id="vst3" title="VST3"
             description="Плагин VST3 для Live, REAPER, Cubase, Studio One и других.">
@@ -221,13 +260,31 @@ cat > "$distXml" <<EOF
         <pkg-ref id="$identifier.app"/>
     </choice>
 
+    <choice id="fan-vst3" title="VST3"
+            description="Плагин VST3 для Live, REAPER, Cubase, Studio One и других.">
+        <pkg-ref id="$siblingIdentifier.vst3"/>
+    </choice>
+
+    <choice id="fan-au" title="Audio Unit"
+            description="Плагин AU для Logic Pro, GarageBand и других хостов Apple.">
+        <pkg-ref id="$siblingIdentifier.au"/>
+    </choice>
+
+    <choice id="fan-app" title="Standalone"
+            description="Отдельное приложение — можно работать без DAW.">
+        <pkg-ref id="$siblingIdentifier.app"/>
+    </choice>
+
     <pkg-ref id="$identifier.vst3" version="$version">vst3.pkg</pkg-ref>
     <pkg-ref id="$identifier.au"   version="$version">au.pkg</pkg-ref>
     <pkg-ref id="$identifier.app"  version="$version">app.pkg</pkg-ref>
+    <pkg-ref id="$siblingIdentifier.vst3" version="$version">fan-vst3.pkg</pkg-ref>
+    <pkg-ref id="$siblingIdentifier.au"   version="$version">fan-au.pkg</pkg-ref>
+    <pkg-ref id="$siblingIdentifier.app"  version="$version">fan-app.pkg</pkg-ref>
 </installer-gui-script>
 EOF
 
-unsignedPkg="$buildDir/$product-$version-unsigned.pkg"
+unsignedPkg="$buildDir/ZS-Motion-Bundle-$version-unsigned.pkg"
 
 productbuild --quiet \
              --distribution "$distXml" \
@@ -236,14 +293,14 @@ productbuild --quiet \
              "$unsignedPkg"
 
 # ─── Sign the installer ─────────────────────────────────────────────────────
-finalPkg="$outDir/$product-$version.pkg"
+finalPkg="$outDir/ZS-Motion-Bundle-$version.pkg"
 
 if [[ $wantSign -eq 1 ]]; then
     echo "Signing the installer..."
     productsign --sign "$installerCert" "$unsignedPkg" "$finalPkg"
     pkgutil --check-signature "$finalPkg" | sed 's/^/  /'
 else
-    finalPkg="$outDir/$product-$version-unsigned.pkg"
+    finalPkg="$outDir/ZS-Motion-Bundle-$version-unsigned.pkg"
     cp "$unsignedPkg" "$finalPkg"
 fi
 
@@ -266,9 +323,11 @@ echo "Installer:"
 echo "  $finalPkg  ($(du -h "$finalPkg" | cut -f1))"
 echo
 echo "Contents:"
-echo "  /Library/Audio/Plug-Ins/VST3/$product.vst3"
-echo "  /Library/Audio/Plug-Ins/Components/$product.component"
-echo "  /Applications/$product.app"
+for name in "$product" "$sibling"; do
+    echo "  /Library/Audio/Plug-Ins/VST3/$name.vst3"
+    echo "  /Library/Audio/Plug-Ins/Components/$name.component"
+    echo "  /Applications/$name.app"
+done
 
 if [[ $wantSign -eq 0 ]]; then
     echo

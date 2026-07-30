@@ -5,12 +5,14 @@
 ;
 ;     ISCC /DAppVersion=0.3.0 /DStageDir=..\..\..\stage installer.iss
 ;
-; Produces one ZS-motion-<version>-Windows.exe that installs the VST3 into the
-; standard shared VST3 folder every Windows host scans, and optionally the
-; standalone with a Start-menu entry. Both are selectable, and it uninstalls
-; cleanly through Apps & features.
+; Produces one ZS-Motion-Bundle-<version>-Windows.exe carrying both plug-ins.
+; Each VST3 goes to the shared folder every Windows host scans; each standalone is
+; optional and gets its own Start-menu entry. Every part is selectable, and it
+; uninstalls cleanly through Apps & features.
 
-#define AppName      "ZS-motion"
+#define AppName      "ZS Motion Bundle"
+#define Motion       "ZS-motion"
+#define Fan          "ZS-MOTION-FAN"
 #define Publisher    "ZS Records"
 #define AppURL       "https://zsr.artspace1977.ru"
 
@@ -40,11 +42,11 @@ VersionInfoVersion={#AppVersion}
 
 ; The plug-in goes to the shared VST3 folder, so the only choosable location is
 ; the standalone's — not worth a wizard page of its own.
-DefaultDirName={autopf}\{#Publisher}\{#AppName}
+DefaultDirName={autopf}\{#Publisher}
 DisableDirPage=yes
 DisableProgramGroupPage=yes
 UninstallDisplayName={#AppName} {#AppVersion}
-UninstallDisplayIcon={app}\{#AppName}.exe
+UninstallDisplayIcon={app}\{#Motion}\{#Motion}.exe
 
 ; 64-bit only, matching the build.
 ArchitecturesAllowed=x64compatible
@@ -54,7 +56,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
 
 OutputDir=.
-OutputBaseFilename={#AppName}-{#AppVersion}-Windows
+OutputBaseFilename=ZS-Motion-Bundle-{#AppVersion}-Windows
 Compression=lzma2/max
 SolidCompression=yes
 
@@ -76,27 +78,38 @@ Name: "full";   Description: "Всё"
 Name: "custom"; Description: "Выборочно"; Flags: iscustom
 
 [Components]
-Name: "vst3"; Description: "VST3 (Live, REAPER, Cubase, Studio One)"; \
-    Types: full custom; Flags: checkablealone
-Name: "app";  Description: "Standalone — отдельное приложение"; \
-    Types: full custom
+Name: "motion";      Description: "{#Motion} — глубокий модуляционный движок"; Types: full custom
+Name: "motion\vst3"; Description: "VST3"; Types: full custom
+Name: "motion\app";  Description: "Standalone"; Types: full custom
+Name: "fan";         Description: "{#Fan} — кольцевая модуляция, десять ручек"; Types: full custom
+Name: "fan\vst3";    Description: "VST3"; Types: full custom
+Name: "fan\app";     Description: "Standalone"; Types: full custom
 
 [Files]
-; The VST3 is a folder bundle, so the whole tree is copied.
-Source: "{#StageDir}\VST3\{#AppName}.vst3\*"; \
-    DestDir: "{commoncf64}\VST3\{#AppName}.vst3"; \
-    Flags: ignoreversion recursesubdirs createallsubdirs; Components: vst3
+; VST3s are folder bundles, so the whole tree is copied for each.
+Source: "{#StageDir}\VST3\{#Motion}.vst3\*"; \
+    DestDir: "{commoncf64}\VST3\{#Motion}.vst3"; \
+    Flags: ignoreversion recursesubdirs createallsubdirs; Components: motion\vst3
 
-Source: "{#StageDir}\Standalone\{#AppName}.exe"; \
-    DestDir: "{app}"; Flags: ignoreversion; Components: app
+Source: "{#StageDir}\Standalone\{#Motion}.exe"; \
+    DestDir: "{app}\{#Motion}"; Flags: ignoreversion; Components: motion\app
+
+Source: "{#StageDir}\VST3\{#Fan}.vst3\*"; \
+    DestDir: "{commoncf64}\VST3\{#Fan}.vst3"; \
+    Flags: ignoreversion recursesubdirs createallsubdirs; Components: fan\vst3
+
+Source: "{#StageDir}\Standalone\{#Fan}.exe"; \
+    DestDir: "{app}\{#Fan}"; Flags: ignoreversion; Components: fan\app
 
 [Icons]
-Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppName}.exe"; Components: app
+Name: "{autoprograms}\{#Motion}"; Filename: "{app}\{#Motion}\{#Motion}.exe"; Components: motion\app
+Name: "{autoprograms}\{#Fan}";    Filename: "{app}\{#Fan}\{#Fan}.exe";       Components: fan\app
 
 [UninstallDelete]
-; Remove the bundle folder itself, which Inno leaves behind once emptied.
-Type: filesandordirs; Name: "{commoncf64}\VST3\{#AppName}.vst3"
+; Remove the bundle folders themselves, which Inno leaves behind once emptied.
+Type: filesandordirs; Name: "{commoncf64}\VST3\{#Motion}.vst3"
+Type: filesandordirs; Name: "{commoncf64}\VST3\{#Fan}.vst3"
 
 [Messages]
-ru.WelcomeLabel2=Будет установлен [name/ver] — кинетический модуляционный эффект студии ZS Records.%n%nЕсли DAW открыта, её нужно перезапустить, чтобы плагин появился в списке.
-en.WelcomeLabel2=This will install [name/ver], a kinetic modulation effect by ZS Records.%n%nRestart your DAW after installing so it picks the plug-in up.
+ru.WelcomeLabel2=Будет установлен [name/ver] — два плагина студии ZS Records: ZS-motion (глубокий модуляционный движок) и ZS-MOTION-FAN (кольцевая модуляция, десять ручек). На следующем шаге можно выбрать, что именно ставить.%n%nЕсли DAW открыта, её нужно перезапустить, чтобы плагины появились в списке.
+en.WelcomeLabel2=This will install [name/ver] — two ZS Records plug-ins: ZS-motion, the deep modulation engine, and ZS-MOTION-FAN, the ten-knob ring modulator. You can choose which parts to install on the next step.%n%nRestart your DAW afterwards so it picks them up.

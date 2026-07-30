@@ -6,7 +6,7 @@ if (APPLE)
     set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Build architectures")
 endif ()
 
-project(ZSmotion VERSION 0.6.0 LANGUAGES C CXX)
+project(ZSmotion VERSION 0.7.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -73,6 +73,60 @@ target_compile_definitions(ZSmotion
         JUCE_DSP_ENABLE_SNAP_TO_ZERO=1)
 
 target_link_libraries(ZSmotion
+    PRIVATE
+        ZSmotionAssets
+        juce::juce_audio_utils
+        juce::juce_dsp
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_lto_flags
+        juce::juce_recommended_warning_flags)
+
+# ─── ZS-MOTION-FAN: the short-reach sibling ─────────────────────────────────
+# Same code base, opposite intent: ten controls, a genuine ring-modulating fan and
+# a tight chorus, all built to what the reference plug-in measures rather than to
+# its documentation. Ships in the same installer as ZS-motion.
+juce_add_plugin(ZSmotionFan
+    COMPANY_NAME              "ZS Records"
+    COMPANY_WEBSITE           "https://zsr.artspace1977.ru"
+    BUNDLE_ID                 "ru.zsrecords.zsmotionfan"
+    PLUGIN_MANUFACTURER_CODE  ZSRc
+    PLUGIN_CODE               Zmfn
+    FORMATS                   AU VST3 Standalone
+    PRODUCT_NAME              "ZS-MOTION-FAN"
+    DESCRIPTION               "Ring-modulation fan"
+    IS_SYNTH                  FALSE
+    NEEDS_MIDI_INPUT          FALSE
+    NEEDS_MIDI_OUTPUT         FALSE
+    IS_MIDI_EFFECT            FALSE
+    EDITOR_WANTS_KEYBOARD_FOCUS TRUE
+    COPY_PLUGIN_AFTER_BUILD   ${ZSMOTION_COPY_AFTER_BUILD}
+    VST3_CATEGORIES           Fx Modulation
+    AU_MAIN_TYPE              kAudioUnitType_Effect
+    NEEDS_WEB_BROWSER         FALSE
+    NEEDS_CURL                FALSE
+    ICON_BIG                  "Resources/brand/icon.png")
+
+target_sources(ZSmotionFan
+    PRIVATE
+        Source/fan/FanProcessor.cpp
+        Source/fan/FanEditor.cpp
+        Source/fan/FanEngine.cpp
+        Source/gui/Theme.cpp
+        Source/gui/ZsLookAndFeel.cpp
+        Source/gui/ZsKnob.cpp)
+
+target_include_directories(ZSmotionFan PRIVATE Source)
+
+target_compile_definitions(ZSmotionFan
+    PUBLIC
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_VST3_CAN_REPLACE_VST2=0
+        JUCE_REPORT_APP_USAGE=0
+        JUCE_DSP_ENABLE_SNAP_TO_ZERO=1)
+
+target_link_libraries(ZSmotionFan
     PRIVATE
         ZSmotionAssets
         juce::juce_audio_utils

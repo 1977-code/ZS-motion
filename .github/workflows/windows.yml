@@ -1,4 +1,4 @@
-name: Windows installer
+name: Windows bundle installer
 
 # Builds the Windows VST3 and standalone with the MSVC toolchain used to ship most
 # JUCE plug-ins, wraps them in an Inno Setup installer, and uploads it as a
@@ -52,10 +52,12 @@ jobs:
           -DZSMOTION_COPY_AFTER_BUILD=OFF
           -DZSMOTION_BUILD_TESTS=ON
 
-      - name: Build plug-in and standalone
+      - name: Build both plug-ins and their standalones
         run: |
           cmake --build build --target ZSmotion_VST3
           cmake --build build --target ZSmotion_Standalone
+          cmake --build build --target ZSmotionFan_VST3
+          cmake --build build --target ZSmotionFan_Standalone
 
       - name: Build and run DSP checks
         run: |
@@ -68,6 +70,8 @@ jobs:
           New-Item -ItemType Directory -Force -Path stage/VST3, stage/Standalone | Out-Null
           Copy-Item -Recurse "build/ZSmotion_artefacts/Release/VST3/ZS-motion.vst3" stage/VST3/
           Copy-Item "build/ZSmotion_artefacts/Release/Standalone/ZS-motion.exe" stage/Standalone/
+          Copy-Item -Recurse "build/ZSmotionFan_artefacts/Release/VST3/ZS-MOTION-FAN.vst3" stage/VST3/
+          Copy-Item "build/ZSmotionFan_artefacts/Release/Standalone/ZS-MOTION-FAN.exe" stage/Standalone/
           Get-ChildItem -Recurse stage | Select-Object -First 20 FullName
 
       - name: Ensure Inno Setup
@@ -95,15 +99,15 @@ jobs:
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: ZS-motion-${{ steps.version.outputs.value }}-Windows-installer
+          name: ZS-Motion-Bundle-${{ steps.version.outputs.value }}-Windows-installer
           path: dist/*.exe
           if-no-files-found: error
 
-      - name: Upload bare VST3
+      - name: Upload bare VST3s
         uses: actions/upload-artifact@v4
         with:
-          name: ZS-motion-${{ steps.version.outputs.value }}-VST3-Windows-x64
-          path: stage/VST3/ZS-motion.vst3
+          name: ZS-Motion-${{ steps.version.outputs.value }}-VST3-Windows-x64
+          path: stage/VST3
           if-no-files-found: error
 
       # On a v* tag, publish the installer so there is a link to share.

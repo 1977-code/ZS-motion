@@ -333,6 +333,74 @@ namespace
         std::printf ("\n");
     }
 
+    /** A fine sweep of the bins around a tone, to read the actual sideband spacing.
+
+        Ring modulation puts its energy at f0 ± the carrier and its harmonics, so
+        the spacing here *is* the carrier frequency — which is how you clone one
+        without ever looking inside it. */
+    void scanSidebands (AudioPluginInstance& plugin, double toneHz = 1000.0)
+    {
+        const int n = (int) (14.0 * sampleRate);
+        const auto input = makeTone (toneHz, n);
+
+        plugin.reset();
+        const auto out = run (plugin, input);
+
+        // A long window: resolving 1 Hz spacing needs at least a second, and more
+        // is better for separating close sidebands.
+        const auto window = bestWindow (out, 0, 3.0);
+
+        if (! window.valid)
+        {
+            std::printf ("  scan: no clean window found (trial mute?) — skipped\n");
+            return;
+        }
+
+        // Normalised to the loudest bin in the scan, not to the centre — a ring
+        // modulator nulls the centre, and dividing by that gives nonsense.
+        constexpr int maxOffset = 30;
+        std::array<double, maxOffset + 1> magnitude {};
+
+        double peak = 0.0;
+        int    peakOffset = -1;
+
+        for (int hz = 0; hz <= maxOffset; ++hz)
+        {
+            const double up = binMagnitude (window.data, window.length, toneHz + hz, sampleRate);
+            const double dn = hz == 0 ? up
+                                      : binMagnitude (window.data, window.length, toneHz - hz, sampleRate);
+            magnitude[(size_t) hz] = jmax (up, dn);
+
+            if (magnitude[(size_t) hz] > peak)
+            {
+                peak = magnitude[(size_t) hz];
+                peakOffset = hz;
+            }
+        }
+
+        std::printf ("  scan around %.0f Hz (window %.1f s, dB below the loudest bin):\n",
+                     toneHz, window.length / sampleRate);
+        std::printf ("    offset :");
+        for (int hz = 0; hz <= maxOffset; ++hz)
+            std::printf (" %4d", hz);
+        std::printf ("\n    dB     :");
+
+        for (int hz = 0; hz <= maxOffset; ++hz)
+        {
+            const double rel = peak > 0.0 ? magnitude[(size_t) hz] / peak : 0.0;
+            std::printf (" %4.0f", rel > 1.0e-5 ? 20.0 * std::log10 (rel) : -99.0);
+        }
+
+        std::printf ("\n");
+
+        const double centreRel = peak > 0.0 ? magnitude[0] / peak : 0.0;
+
+        std::printf ("    loudest at %+d Hz; the tone itself sits %s below it\n",
+                     peakOffset,
+                     centreRel > 1.0e-5 ? (String (-20.0 * std::log10 (centreRel), 1) + " dB").toRawUTF8()
+                                        : "more than 100 dB");
+    }
+
     void measureHarmonics (AudioPluginInstance& plugin, double toneHz = 1000.0)
     {
         const int n = (int) (14.0 * sampleRate);
@@ -444,6 +512,7 @@ namespace
             measureLatency (*plugin);
             measureModulation (*plugin);
             measureCarrier (*plugin);
+            scanSidebands (*plugin);
             measureHarmonics (*plugin);
 
             plugin->releaseResources();

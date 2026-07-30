@@ -85,6 +85,12 @@ private:
         juce::ComboBox   presetBox;
         juce::TextButton prevPreset { "<" }, nextPreset { ">" };
         juce::TextButton savePreset { "Save" }, deletePreset { "Del" };
+        juce::TextButton randomPreset { "?" };
+
+        // A TextButton, not a ToggleButton: the look-and-feel styles these as the
+        // gold panel chips the rest of the switches use.
+        juce::TextButton bypassButton { "Bypass" };
+        std::unique_ptr<APVTS::ButtonAttachment> bypassAtt;
 
         void syncPresetBox();
         void rebuildPresetList();

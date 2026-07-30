@@ -124,6 +124,23 @@ public:
     void selectNext()     { if (getNumPresets() > 0) load ((currentIndex + 1) % getNumPresets()); }
     void selectPrevious() { if (getNumPresets() > 0) load ((currentIndex - 1 + getNumPresets()) % getNumPresets()); }
 
+    /** Jump somewhere else at random — the quickest way to find a sound you would
+        not have dialled up on purpose. Never lands on where it already is. */
+    void selectRandom()
+    {
+        const int count = getNumPresets();
+
+        if (count <= 1)
+            return;
+
+        int next = currentIndex;
+
+        while (next == currentIndex)
+            next = random.nextInt (count);
+
+        load (next);
+    }
+
     /** Writes the current settings as a user preset. Returns its new index, or -1. */
     int saveUserPreset (const juce::String& rawName)
     {
@@ -344,6 +361,7 @@ private:
     std::vector<Preset> factory;
     juce::Array<juce::File> userFiles;
 
+    juce::Random random;
     int  currentIndex = 0;
     bool dirty   = false;
     bool loading = false;

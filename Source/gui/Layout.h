@@ -57,10 +57,18 @@ namespace zs::layout
         return { margin, barY, 434, barH };
     }
 
+    inline constexpr int bypassWidth = 78;
+
+    /** The master bypass sits at the far right of the bar, as the top-bar switch. */
+    inline juce::Rectangle<int> bypassBounds()
+    {
+        return { width - margin - bypassWidth, barY, bypassWidth, barH };
+    }
+
     inline juce::Rectangle<int> modeBarBounds()
     {
         const int x = margin + 454;
-        return { x, barY, width - margin - x, barH };
+        return { x, barY, width - margin - bypassWidth - 10 - x, barH };
     }
 
     /** Row `index` of the four control rows inside the selector panel. */

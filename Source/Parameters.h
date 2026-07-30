@@ -17,6 +17,7 @@
 namespace zs::params
 {
     // ── IDs ──────────────────────────────────────────────────────────────────
+    inline constexpr const char* bypass         = "bypass";
     inline constexpr const char* mode           = "mode";
     inline constexpr const char* depth          = "depth";
     inline constexpr const char* rate           = "rate";
@@ -82,6 +83,11 @@ namespace zs::params
         {
             return String (roundToInt (v)) + String::fromUTF8 ("\xc2\xb0");
         };
+
+        // Declared first, and handed to the host as the official bypass, so the
+        // host's own bypass button drives this one control.
+        p.push_back (std::make_unique<AudioParameterBool> (
+            ParameterID { bypass, 1 }, "Bypass", false));
 
         p.push_back (std::make_unique<AudioParameterChoice> (
             ParameterID { mode, 1 }, "Mode", modeChoices(), 0));

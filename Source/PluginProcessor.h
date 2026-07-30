@@ -26,6 +26,13 @@ public:
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override                             { return true; }
 
+    /** Hand the host our own bypass, so its bypass button and ours are one control
+        and the reported latency stays put either way. */
+    juce::AudioParameterBool* getBypassParameter() const override
+    {
+        return dynamic_cast<juce::AudioParameterBool*> (apvts.getParameter (zs::params::bypass));
+    }
+
     const juce::String getName() const override                 { return JucePlugin_Name; }
     bool acceptsMidi() const override                           { return false; }
     bool producesMidi() const override                          { return false; }
@@ -79,6 +86,7 @@ private:
     zs::ModulationEngine engine;
 
     // Cached parameter pointers.
+    std::atomic<float>* pBypass = nullptr;
     std::atomic<float>* pMode = nullptr;
     std::atomic<float>* pDepth = nullptr;
     std::atomic<float>* pRate = nullptr;

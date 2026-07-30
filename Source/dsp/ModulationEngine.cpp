@@ -137,12 +137,36 @@ void ModulationEngine::process (juce::AudioBuffer<float>& buffer) noexcept
     dryDelaySamples = saturator.getLatencySamples();
     const bool compensate = dryDelaySamples >= 2.0f;
 
+
     ModeProcessor* cur  = modeFor (currentMode);
     ModeProcessor* prev = modeFor (prevMode);
 
     const bool stereo = channels > 1;
     float* left  = buffer.getWritePointer (0);
     float* right = stereo ? buffer.getWritePointer (1) : nullptr;
+
+    // Bypassed: pass the input through, but keep it running through the same
+    // compensation delay so the latency the host was told about still holds and
+    // toggling bypass does not shift the track in time.
+    if (s.bypassed)
+    {
+        for (int i = 0; i < numSamples; ++i)
+        {
+            dryCompensation[0].push (left[i]);
+            dryCompensation[1].push (stereo ? right[i] : left[i]);
+
+            if (compensate)
+            {
+                left[i] = dryCompensation[0].readHermite (dryDelaySamples);
+
+                if (stereo)
+                    right[i] = dryCompensation[1].readHermite (dryDelaySamples);
+            }
+        }
+
+        uiLevel.store (0.0f, std::memory_order_relaxed);
+        return;
+    }
 
     // Wet path opens with saturation, run as a block stage so it can be
     // oversampled. Work on a scratch copy of the input; the dry stays in buffer.

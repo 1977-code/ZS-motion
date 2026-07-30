@@ -37,6 +37,7 @@ public:
 
     struct Settings
     {
+        bool  bypassed      = false;
         Mode  mode          = Mode::Chorus;
         float depth         = 0.5f;      // 0..1
         float rateHz        = 1.0f;      // effective LFO rate (sync already resolved)

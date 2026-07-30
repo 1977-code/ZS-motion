@@ -223,16 +223,27 @@ ZsMotionAudioProcessorEditor::Content::Content (ZsMotionAudioProcessor& p)
     };
     addAndMakeVisible (presetBox);
 
-    for (auto* b : { &prevPreset, &nextPreset, &savePreset, &deletePreset })
+    for (auto* b : { &prevPreset, &nextPreset, &savePreset, &deletePreset, &randomPreset })
     {
         b->setTooltip (presetTip);
         addAndMakeVisible (b);
     }
 
+    randomPreset.setTooltip (String::fromUTF8 (
+        "Случайный пресет — быстрый способ найти звук, который сам бы не выставил."));
+
     prevPreset.onClick   = [this] { processor.presets.selectPrevious(); syncPresetBox(); };
     nextPreset.onClick   = [this] { processor.presets.selectNext();     syncPresetBox(); };
+    randomPreset.onClick = [this] { processor.presets.selectRandom();   syncPresetBox(); };
     savePreset.onClick   = [this] { askToSavePreset(); };
     deletePreset.onClick = [this] { askToDeletePreset(); };
+
+    bypassButton.setClickingTogglesState (true);
+    bypassButton.setTooltip (String::fromUTF8 (
+        "Обход всей обработки. Это тот же байпас, что и кнопка хоста, "
+        "и задержка при обходе не меняется, чтобы дорожка не съезжала."));
+    addAndMakeVisible (bypassButton);
+    bypassAtt = std::make_unique<APVTS::ButtonAttachment> (processor.apvts, zs::params::bypass, bypassButton);
 
     addAndMakeVisible (dirtyWatcher);
 
@@ -400,6 +411,7 @@ void ZsMotionAudioProcessorEditor::Content::resized()
     background.setBounds (getLocalBounds());
     rotor.setBounds (rotorBounds());
     modes.setBounds (modeBarBounds());
+    bypassButton.setBounds (bypassBounds().reduced (2, 5));
 
     // Preset bar:  <  [ name ]  >   Save  Del
     {
@@ -408,9 +420,11 @@ void ZsMotionAudioProcessorEditor::Content::resized()
         prevPreset.setBounds (bar.removeFromLeft (30).reduced (2, 5));
         bar.removeFromLeft (3);
 
-        deletePreset.setBounds (bar.removeFromRight (46).reduced (2, 5));
-        bar.removeFromRight (4);
-        savePreset.setBounds (bar.removeFromRight (56).reduced (2, 5));
+        deletePreset.setBounds (bar.removeFromRight (44).reduced (2, 5));
+        bar.removeFromRight (3);
+        savePreset.setBounds (bar.removeFromRight (52).reduced (2, 5));
+        bar.removeFromRight (3);
+        randomPreset.setBounds (bar.removeFromRight (30).reduced (2, 5));
         bar.removeFromRight (10);
 
         nextPreset.setBounds (bar.removeFromRight (30).reduced (2, 5));

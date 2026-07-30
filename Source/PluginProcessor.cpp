@@ -8,6 +8,7 @@ ZsMotionAudioProcessor::ZsMotionAudioProcessor()
                           .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "ZSMOTION", zs::params::createLayout())
 {
+    pBypass         = raw (zs::params::bypass);
     pMode           = raw (zs::params::mode);
     pDepth          = raw (zs::params::depth);
     pRate           = raw (zs::params::rate);
@@ -76,6 +77,8 @@ zs::ModulationEngine::Settings
 ZsMotionAudioProcessor::gatherSettings (double bpm, double ppq, bool playing) const
 {
     zs::ModulationEngine::Settings s;
+
+    s.bypassed = pBypass->load() > 0.5f;
 
     s.mode           = (zs::ModulationEngine::Mode) juce::jlimit (0, 3, (int) pMode->load());
     s.depth          = pDepth->load();

@@ -360,6 +360,64 @@ int main()
         }
     }
 
+    // ── Bypass passes the signal through and keeps the latency put ──────────────
+    {
+        // With no oversampling, bypass must be sample-exact.
+        {
+            zs::ModulationEngine eng;
+            eng.prepare (sr, block, 2);
+
+            zs::ModulationEngine::Settings s;
+            s.bypassed = true;
+            s.depth = 1.0f;
+            s.mix = 1.0f;
+            s.saturation = 1.0f;
+            s.fanEnabled = true;
+            eng.setSettings (s);
+
+            juce::AudioBuffer<float> in (2, block), out (2, block);
+            fillNoise (in, 21);
+            out.makeCopyOf (in);
+            eng.process (out);
+
+            float worst = 0.0f;
+            for (int ch = 0; ch < 2; ++ch)
+                for (int i = 0; i < block; ++i)
+                    worst = juce::jmax (worst, std::abs (out.getSample (ch, i) - in.getSample (ch, i)));
+
+            check (worst == 0.0f, "bypass is bit-exact with no oversampling");
+        }
+
+        // With oversampling on, bypass must still report the same latency, so
+        // toggling it cannot shift the track against the rest of the session.
+        {
+            zs::ModulationEngine eng;
+            eng.prepare (sr, block, 2);
+
+            zs::ModulationEngine::Settings s;
+            s.satQuality = 2;
+            s.saturation = 0.5f;
+
+            juce::AudioBuffer<float> buf (2, block);
+
+            s.bypassed = false;
+            eng.setSettings (s);
+            fillNoise (buf, 22);
+            eng.process (buf);
+            const int active = eng.getLatencySamples();
+
+            s.bypassed = true;
+            eng.setSettings (s);
+            fillNoise (buf, 23);
+            eng.process (buf);
+            const int bypassed = eng.getLatencySamples();
+
+            std::printf ("      latency active=%d bypassed=%d\n", active, bypassed);
+            check (active == bypassed && active > 0,
+                   "bypass keeps the reported latency unchanged while oversampling");
+        }
+    }
+
     // ── Rotary survives an abrupt rate jump (inertia is finite) ─────────────────
     {
         zs::ModulationEngine eng;

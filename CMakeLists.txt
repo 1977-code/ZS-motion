@@ -6,7 +6,7 @@ if (APPLE)
     set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Build architectures")
 endif ()
 
-project(ZSmotion VERSION 0.5.0 LANGUAGES C CXX)
+project(ZSmotion VERSION 0.6.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -142,6 +142,34 @@ if (ZSMOTION_BUILD_ART)
         PRIVATE
             ZSmotionAssets
             juce::juce_gui_extra
+        PUBLIC
+            juce::juce_recommended_config_flags
+            juce::juce_recommended_warning_flags)
+endif ()
+
+# ─── Measuring bench ────────────────────────────────────────────────────────
+# Hosts any VST3/AU and measures it from its audio alone, so this plug-in can be
+# compared against others fairly. Off by default.
+option(ZSMOTION_BUILD_COMPARE "Build the plug-in measuring bench" OFF)
+
+if (ZSMOTION_BUILD_COMPARE)
+    juce_add_console_app(ZSmotionCompare PRODUCT_NAME "ZS-motion Compare")
+
+    target_sources(ZSmotionCompare PRIVATE Tests/Compare.cpp)
+
+    target_compile_definitions(ZSmotionCompare
+        PUBLIC
+            JUCE_WEB_BROWSER=0
+            JUCE_USE_CURL=0
+            JUCE_STANDALONE_APPLICATION=1
+            JUCE_PLUGINHOST_VST3=1
+            JUCE_PLUGINHOST_AU=1)
+
+    target_link_libraries(ZSmotionCompare
+        PRIVATE
+            juce::juce_audio_utils
+            juce::juce_audio_processors
+            juce::juce_dsp
         PUBLIC
             juce::juce_recommended_config_flags
             juce::juce_recommended_warning_flags)

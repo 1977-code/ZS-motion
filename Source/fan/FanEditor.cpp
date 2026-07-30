@@ -1,4 +1,5 @@
 #include "FanEditor.h"
+#include "RingFan.h"
 #include "MorphLFO.h"
 
 using namespace juce;
@@ -102,17 +103,17 @@ void ZsFanAudioProcessorEditor::CarrierView::paint (Graphics& g)
         g.strokePath (p, PathStrokeType (1.3f));
     }
 
-    // The blade carrier, in front — only meaningful when the fan is running.
+    // The blade carrier, in front — only meaningful when the fan is running. Drawn
+    // through RingFan's own shape function, so this is the curve the audio thread
+    // multiplies by, band-limiting and all, rather than an idealised rectangle.
     {
-        constexpr float duty = 0.2f;
-
         Path p;
 
         for (int i = 0; i <= steps; ++i)
         {
             const float t = (float) i / (float) steps;
             const float phase = zs::math::wrap01 (t * cycles);
-            const float carrier = ((phase < duty ? 1.0f : 0.0f) - duty) / (1.0f - duty);
+            const float carrier = zs::fan::RingFan::shapeAt (phase);
 
             const Point<float> pt { plot.getX() + plot.getWidth() * t, midY - carrier * amp };
 

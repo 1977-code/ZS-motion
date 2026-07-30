@@ -94,7 +94,45 @@ public:
         outR = inR * depth * carrierAt (math::wrap01 (phase + stereoOffset));
     }
 
+    /** The carrier shape itself, computed rather than looked up.
+
+        Public and static so the interface can draw the very same curve the audio
+        thread runs, instead of a stand-in that only looks similar. Costs a handful
+        of sines per point, which is nothing for drawing and is why the audio path
+        uses the table instead. */
+    static float shapeAt (float t) noexcept
+    {
+        // Peak found once, on first use, so drawing and audio share a scale.
+        static const float peak = peakOfShape();
+
+        const float raw = rawShape (t);
+        return peak > 0.0f ? raw / peak : raw;
+    }
+
 private:
+    /** The impulse pair, as a sum of harmonics: flat across the band, nulls every
+        fifth, and nothing above the nineteenth — which is what was measured. */
+    static float rawShape (float t) noexcept
+    {
+        float sum = 0.0f;
+
+        for (int k = 1; k <= harmonics; ++k)
+            sum += std::sin (math::pi * (float) k * duty)
+                 * std::sin (math::twoPi * (float) k * t);
+
+        return sum;
+    }
+
+    static float peakOfShape() noexcept
+    {
+        float peak = 0.0f;
+
+        for (int i = 0; i < tableSize; ++i)
+            peak = std::max (peak, std::abs (rawShape ((float) i / (float) tableSize)));
+
+        return peak;
+    }
+
     /** Linear read of the band-limited table — it is smooth, so this is plenty. */
     float carrierAt (float p) const noexcept
     {
@@ -108,28 +146,11 @@ private:
         return math::lerp (a, b, f);
     }
 
-    /** Sum the harmonics of an opposite-impulse pair, once, at prepare time. */
+    /** Lay the carrier out once, at prepare time, through the shared shape. */
     void buildTable()
     {
-        float peak = 0.0f;
-
         for (int i = 0; i < tableSize; ++i)
-        {
-            const float t = (float) i / (float) tableSize;
-            float sum = 0.0f;
-
-            for (int k = 1; k <= harmonics; ++k)
-                sum += std::sin (math::pi * (float) k * duty)
-                     * std::sin (math::twoPi * (float) k * t);
-
-            table[(size_t) i] = sum;
-            peak = std::max (peak, std::abs (sum));
-        }
-
-        // Normalise so a blade pass reaches unity, whatever the harmonic count.
-        if (peak > 0.0f)
-            for (auto& v : table)
-                v /= peak;
+            table[(size_t) i] = shapeAt ((float) i / (float) tableSize);
     }
 
     void updateIncrement() noexcept { increment = (float) (rateHz / sampleRate); }

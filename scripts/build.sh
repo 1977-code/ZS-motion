@@ -33,8 +33,13 @@ fi
 
 echo
 echo "Built:"
-find build/ZSmotion_artefacts/Release -maxdepth 2 -name "ZS-motion.*" -o -maxdepth 2 -name "ZS-motion.app" | sed 's/^/  /'
+for artefacts in build/ZSmotion_artefacts/Release build/ZSmotionFan_artefacts/Release; do
+    find "$artefacts" -maxdepth 2 \( -name "*.vst3" -o -name "*.component" -o -name "*.app" \) \
+        2>/dev/null | sed 's/^/  /'
+done
 echo
 echo "Installed to:"
-echo "  ~/Library/Audio/Plug-Ins/VST3/ZS-motion.vst3"
-echo "  ~/Library/Audio/Plug-Ins/Components/ZS-motion.component"
+for name in ZS-motion ZS-MOTION-FAN; do
+    echo "  ~/Library/Audio/Plug-Ins/VST3/$name.vst3"
+    echo "  ~/Library/Audio/Plug-Ins/Components/$name.component"
+done

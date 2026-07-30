@@ -6,7 +6,7 @@ if (APPLE)
     set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Build architectures")
 endif ()
 
-project(ZSmotion VERSION 0.7.0 LANGUAGES C CXX)
+project(ZSmotion VERSION 0.7.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -204,6 +204,43 @@ endif ()
 # ─── Measuring bench ────────────────────────────────────────────────────────
 # Hosts any VST3/AU and measures it from its audio alone, so this plug-in can be
 # compared against others fairly. Off by default.
+# The sibling's editor needs its own snapshot target: each plug-in defines its own
+# createPluginFilter(), so the two cannot live in one console app.
+if (ZSMOTION_BUILD_SHOT)
+    juce_add_console_app(ZSmotionFanShot PRODUCT_NAME "ZS-MOTION-FAN Shot")
+
+    target_sources(ZSmotionFanShot
+        PRIVATE
+            Tests/FanShot.cpp
+            Source/fan/FanProcessor.cpp
+            Source/fan/FanEditor.cpp
+            Source/fan/FanEngine.cpp
+            Source/gui/Theme.cpp
+            Source/gui/ZsLookAndFeel.cpp
+            Source/gui/ZsKnob.cpp)
+
+    target_include_directories(ZSmotionFanShot PRIVATE Source)
+
+    target_compile_definitions(ZSmotionFanShot
+        PUBLIC
+            JUCE_WEB_BROWSER=0
+            JUCE_USE_CURL=0
+            JUCE_STANDALONE_APPLICATION=1
+            JUCE_MODAL_LOOPS_PERMITTED=1
+            JUCE_DSP_ENABLE_SNAP_TO_ZERO=1
+            JucePlugin_Name="ZS-MOTION-FAN"
+            JucePlugin_VersionString="${PROJECT_VERSION}")
+
+    target_link_libraries(ZSmotionFanShot
+        PRIVATE
+            ZSmotionAssets
+            juce::juce_audio_utils
+            juce::juce_dsp
+        PUBLIC
+            juce::juce_recommended_config_flags
+            juce::juce_recommended_warning_flags)
+endif ()
+
 option(ZSMOTION_BUILD_COMPARE "Build the plug-in measuring bench" OFF)
 
 if (ZSMOTION_BUILD_COMPARE)

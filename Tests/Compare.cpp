@@ -72,6 +72,58 @@ namespace
         return String (20.0 * std::log10 (linear), 1) + " dB";
     }
 
+    /** Pick the loudest clean stretch of a recording.
+
+        A trial build that mutes itself will otherwise land its silence in the
+        middle of a measurement and quietly ruin it — a window that is only partly
+        silent still passes a plain RMS check while its spectrum is nonsense. So
+        record well past the mute and measure inside the best window we can find,
+        rejecting any whose two halves disagree in level, because that is what a
+        mute starting mid-window looks like. */
+    struct Window { const float* data = nullptr; int length = 0; bool valid = false; };
+
+    Window bestWindow (const AudioBuffer<float>& buffer, int channel, double windowSeconds)
+    {
+        const int length = (int) (windowSeconds * sampleRate);
+        const int total  = buffer.getNumSamples();
+
+        if (length <= 0 || total < length)
+            return {};
+
+        const auto* start = buffer.getReadPointer (channel);
+        const int step = jmax (1, length / 2);
+
+        Window best;
+        double bestLevel = 0.0;
+
+        for (int offset = 0; offset + length <= total; offset += step)
+        {
+            const auto* candidate = start + offset;
+
+            const double first  = rms (candidate, length / 2);
+            const double second = rms (candidate + length / 2, length / 2);
+
+            if (first < 1.0e-5 || second < 1.0e-5)
+                continue;                                   // silence in this window
+
+            // A mute edge shows up as the halves being wildly different.
+            const double ratio = first > second ? first / second : second / first;
+
+            if (ratio > 1.6)
+                continue;
+
+            const double level = jmin (first, second);
+
+            if (level > bestLevel)
+            {
+                bestLevel = level;
+                best = { candidate, length, true };
+            }
+        }
+
+        return best;
+    }
+
     //==========================================================================
     /** Runs a plug-in over a prepared input buffer and returns its output. */
     AudioBuffer<float> run (AudioPluginInstance& plugin, const AudioBuffer<float>& input)
@@ -149,8 +201,14 @@ namespace
 
     void measureLatency (AudioPluginInstance& plugin)
     {
-        constexpr int n = 8192;
-        constexpr int at = 128;
+        // A second of silence before the impulse, so every parameter ramp inside
+        // the plug-in has finished. Fire it too early and the still-moving dry/wet
+        // smoothing lets the dry signal through louder than the delayed wet, which
+        // reads as "no delay" when there is one.
+        // 250 ms is a twelvefold margin over a 20 ms smoothing ramp, and still early
+        // enough to finish before a trial build starts muting itself.
+        const int at = (int) (0.25 * sampleRate);
+        const int n  = at + (int) (0.25 * sampleRate);
 
         AudioBuffer<float> input (2, n);
         input.clear();
@@ -160,10 +218,10 @@ namespace
         plugin.reset();
         const auto out = run (plugin, input);
 
-        int peak = 0;
+        int peak = at;
         float best = 0.0f;
 
-        for (int i = 0; i < n; ++i)
+        for (int i = at; i < n; ++i)
             if (std::abs (out.getSample (0, i)) > best)
             {
                 best = std::abs (out.getSample (0, i));
@@ -241,20 +299,24 @@ namespace
     /** Ring modulation removes the carrier; amplitude modulation keeps it. */
     void measureCarrier (AudioPluginInstance& plugin, double toneHz = 1000.0)
     {
-        const int n = (int) (2.0 * sampleRate);
+        // Long enough to step over a five-second trial mute and still find a clean
+        // second to measure in.
+        const int n = (int) (14.0 * sampleRate);
         const auto input = makeTone (toneHz, n);
 
         plugin.reset();
         const auto out = run (plugin, input);
 
-        const auto* data = out.getReadPointer (0) + n / 4;      // skip the onset
-        const int len = n / 2;
+        const auto window = bestWindow (out, 0, 1.0);
 
-        if (rms (data, len) < 1.0e-5)
+        if (! window.valid)
         {
-            std::printf ("  carrier: silent output — skipped\n");
+            std::printf ("  carrier: no clean window found (trial mute?) — skipped\n");
             return;
         }
+
+        const auto* data = window.data;
+        const int len = window.length;
 
         const double atTone = binMagnitude (data, len, toneHz, sampleRate);
 
@@ -273,20 +335,22 @@ namespace
 
     void measureHarmonics (AudioPluginInstance& plugin, double toneHz = 1000.0)
     {
-        const int n = (int) (2.0 * sampleRate);
+        const int n = (int) (14.0 * sampleRate);
         const auto input = makeTone (toneHz, n, 0.8f);
 
         plugin.reset();
         const auto out = run (plugin, input);
 
-        const auto* data = out.getReadPointer (0) + n / 4;
-        const int len = n / 2;
+        const auto window = bestWindow (out, 0, 1.0);
 
-        if (rms (data, len) < 1.0e-5)
+        if (! window.valid)
         {
-            std::printf ("  harmonics: silent output — skipped\n");
+            std::printf ("  harmonics: no clean window found (trial mute?) — skipped\n");
             return;
         }
+
+        const auto* data = window.data;
+        const int len = window.length;
 
         const double f0 = binMagnitude (data, len, toneHz, sampleRate);
 
